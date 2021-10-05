@@ -23,13 +23,6 @@ func TestProcessorRunnerRunHistoryArchiveIngestionGenesis(t *testing.T) {
 
 	q := &mockDBQ{}
 
-	// Batches
-	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
-	defer mock.AssertExpectationsForObjects(t, mockAccountDataBatchInsertBuilder)
-	mockAccountDataBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(mockAccountDataBatchInsertBuilder).Once()
-
 	q.MockQAccounts.On("UpsertAccounts", ctx, []history.AccountEntry{
 		{
 			LastModifiedLedger: 1,
@@ -95,13 +88,6 @@ func TestProcessorRunnerRunHistoryArchiveIngestionHistoryArchive(t *testing.T) {
 			nil,
 		).Once()
 
-	// Batches
-	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
-	defer mock.AssertExpectationsForObjects(t, mockAccountDataBatchInsertBuilder)
-	mockAccountDataBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(mockAccountDataBatchInsertBuilder).Once()
-
 	q.MockQAccounts.On("UpsertAccounts", ctx, []history.AccountEntry{
 		{
 			LastModifiedLedger: 1,
@@ -151,10 +137,6 @@ func TestProcessorRunnerRunHistoryArchiveIngestionProtocolVersionNotSupported(t 
 	defer mock.AssertExpectationsForObjects(t, historyAdapter)
 
 	// Batches
-	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
-	defer mock.AssertExpectationsForObjects(t, mockAccountDataBatchInsertBuilder)
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(mockAccountDataBatchInsertBuilder).Once()
 
 	mockAccountSignersBatchInsertBuilder := &history.MockAccountSignersBatchInsertBuilder{}
 	defer mock.AssertExpectationsForObjects(t, mockAccountSignersBatchInsertBuilder)
@@ -172,7 +154,7 @@ func TestProcessorRunnerRunHistoryArchiveIngestionProtocolVersionNotSupported(t 
 	}
 
 	_, err := runner.RunHistoryArchiveIngestion(100, 200, xdr.Hash{})
-	assert.EqualError(t, err, "Error while checking for supported protocol version: This Horizon version does not support protocol version 200. The latest supported protocol version is 17. Please upgrade to the latest Horizon version.")
+	assert.EqualError(t, err, "Error while checking for supported protocol version: This Horizon version does not support protocol version 200. The latest supported protocol version is 18. Please upgrade to the latest Horizon version.")
 }
 
 func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
@@ -183,18 +165,15 @@ func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
 	defer mock.AssertExpectationsForObjects(t, q)
 
 	// Twice = checking ledgerSource and historyArchiveSource
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(&history.MockAccountDataBatchInsertBuilder{}).Twice()
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
 		Return(&history.MockAccountSignersBatchInsertBuilder{}).Twice()
-
 	runner := ProcessorRunner{
 		ctx:      ctx,
 		historyQ: q,
 	}
 
 	stats := &ingest.StatsChangeProcessor{}
-	processor := runner.buildChangeProcessor(stats, ledgerSource, 123)
+	processor := buildChangeProcessor(runner.historyQ, stats, ledgerSource, 123)
 	assert.IsType(t, &groupChangeProcessors{}, processor)
 
 	assert.IsType(t, &statsChangeProcessor{}, processor.processors[0])
@@ -214,7 +193,7 @@ func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
 		historyQ: q,
 	}
 
-	processor = runner.buildChangeProcessor(stats, historyArchiveSource, 456)
+	processor = buildChangeProcessor(runner.historyQ, stats, historyArchiveSource, 456)
 	assert.IsType(t, &groupChangeProcessors{}, processor)
 
 	assert.IsType(t, &statsChangeProcessor{}, processor.processors[0])
@@ -284,12 +263,6 @@ func TestProcessorRunnerRunAllProcessorsOnLedger(t *testing.T) {
 	}
 
 	// Batches
-	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
-	defer mock.AssertExpectationsForObjects(t, mockAccountDataBatchInsertBuilder)
-	mockAccountDataBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(mockAccountDataBatchInsertBuilder).Once()
-
 	mockAccountSignersBatchInsertBuilder := &history.MockAccountSignersBatchInsertBuilder{}
 	defer mock.AssertExpectationsForObjects(t, mockAccountSignersBatchInsertBuilder)
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
@@ -342,10 +315,6 @@ func TestProcessorRunnerRunAllProcessorsOnLedgerProtocolVersionNotSupported(t *t
 	}
 
 	// Batches
-	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
-	defer mock.AssertExpectationsForObjects(t, mockAccountDataBatchInsertBuilder)
-	q.MockQData.On("NewAccountDataBatchInsertBuilder", maxBatchSize).
-		Return(mockAccountDataBatchInsertBuilder).Once()
 
 	mockAccountSignersBatchInsertBuilder := &history.MockAccountSignersBatchInsertBuilder{}
 	defer mock.AssertExpectationsForObjects(t, mockAccountSignersBatchInsertBuilder)
@@ -369,5 +338,5 @@ func TestProcessorRunnerRunAllProcessorsOnLedgerProtocolVersionNotSupported(t *t
 	}
 
 	_, _, _, _, err := runner.RunAllProcessorsOnLedger(ledger)
-	assert.EqualError(t, err, "Error while checking for supported protocol version: This Horizon version does not support protocol version 200. The latest supported protocol version is 17. Please upgrade to the latest Horizon version.")
+	assert.EqualError(t, err, "Error while checking for supported protocol version: This Horizon version does not support protocol version 200. The latest supported protocol version is 18. Please upgrade to the latest Horizon version.")
 }

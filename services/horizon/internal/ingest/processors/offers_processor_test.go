@@ -6,52 +6,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stellar/go/gxdr"
 	"github.com/stellar/go/ingest"
-	"github.com/stellar/go/randxdr"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
-	"github.com/stellar/go/services/horizon/internal/test"
-	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/xdr"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
-
-func TestFuzzOffers(t *testing.T) {
-	tt := test.Start(t)
-	test.ResetHorizonDB(t, tt.HorizonDB)
-	q := &history.Q{&db.Session{DB: tt.HorizonDB}}
-	pp := NewOffersProcessor(q, 10)
-	gen := randxdr.NewGenerator()
-
-	var changes []xdr.LedgerEntryChange
-	for i := 0; i < 1000; i++ {
-		change := xdr.LedgerEntryChange{}
-		shape := &gxdr.LedgerEntryChange{}
-		gen.Next(
-			shape,
-			[]randxdr.Preset{
-				{randxdr.FieldEquals("type"), randxdr.SetU32(gxdr.LEDGER_ENTRY_CREATED.GetU32())},
-				// the offers postgres table is configured with some database constraints which validate the following
-				// fields:
-				{randxdr.FieldEquals("created.lastModifiedLedgerSeq"), randxdr.SetPositiveNum32()},
-				{randxdr.FieldEquals("created.data.offer.amount"), randxdr.SetPositiveNum64()},
-				{randxdr.FieldEquals("created.data.offer.price.n"), randxdr.SetPositiveNum32()},
-				{randxdr.FieldEquals("created.data.offer.price.d"), randxdr.SetPositiveNum32()},
-			},
-		)
-		tt.Assert.NoError(gxdr.Convert(shape, &change))
-		changes = append(changes, change)
-	}
-
-	for _, change := range ingest.GetChangesFromLedgerEntryChanges(changes) {
-		tt.Assert.NoError(pp.ProcessChange(tt.Ctx, change))
-	}
-
-	tt.Assert.NoError(pp.Commit(tt.Ctx))
-}
 
 func TestOffersProcessorTestSuiteState(t *testing.T) {
 	suite.Run(t, new(OffersProcessorTestSuiteState))
@@ -223,13 +185,13 @@ func (s *OffersProcessorTestSuiteLedger) TestInsertOffer() {
 }
 
 func (s *OffersProcessorTestSuiteLedger) TestSkipCompactionIfSequenceEqualsWindow() {
-	s.processor.sequence = offerCompactionWindow
+	s.processor.sequence = compactionWindow
 	s.setupInsertOffer()
 	s.Assert().NoError(s.processor.Commit(s.ctx))
 }
 
 func (s *OffersProcessorTestSuiteLedger) TestSkipCompactionIfSequenceLessThanWindow() {
-	s.processor.sequence = offerCompactionWindow - 1
+	s.processor.sequence = compactionWindow - 1
 	s.setupInsertOffer()
 	s.Assert().NoError(s.processor.Commit(s.ctx))
 }
@@ -341,7 +303,17 @@ func (s *OffersProcessorTestSuiteLedger) TestRemoveOffer() {
 	})
 	s.Assert().NoError(err)
 
-	s.mockQ.On("RemoveOffers", s.ctx, []int64{3}, s.sequence).Return(int64(1), nil).Once()
+	s.mockQ.On("UpsertOffers", s.ctx, []history.Offer{
+		{
+			SellerID:           "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML",
+			OfferID:            3,
+			Pricen:             3,
+			Priced:             1,
+			Price:              3,
+			Deleted:            true,
+			LastModifiedLedger: 456,
+		},
+	}).Return(nil).Once()
 	s.mockQ.On("CompactOffers", s.ctx, s.sequence-100).Return(int64(0), nil).Once()
 	s.Assert().NoError(s.processor.Commit(s.ctx))
 }
@@ -399,8 +371,8 @@ func (s *OffersProcessorTestSuiteLedger) TestProcessUpgradeChange() {
 		{
 			SellerID:           "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML",
 			OfferID:            2,
-			Pricen:             int32(1),
-			Priced:             int32(6),
+			Pricen:             1,
+			Priced:             6,
 			Price:              float64(1) / float64(6),
 			LastModifiedLedger: uint32(lastModifiedLedgerSeq),
 		},
@@ -444,56 +416,34 @@ func (s *OffersProcessorTestSuiteLedger) TestRemoveMultipleOffers() {
 	s.Assert().NoError(err)
 
 	s.mockQ.On("CompactOffers", s.ctx, s.sequence-100).Return(int64(0), nil).Once()
-	s.mockQ.On("RemoveOffers", s.ctx, mock.Anything, s.sequence).Run(func(args mock.Arguments) {
+	s.mockQ.On("UpsertOffers", s.ctx, mock.Anything).Run(func(args mock.Arguments) {
 		// To fix order issue due to using ChangeCompactor
-		ids := args.Get(1).([]int64)
-		s.Assert().ElementsMatch(ids, []int64{3, 4})
-	}).Return(int64(2), nil).Once()
+		offers := args.Get(1).([]history.Offer)
+		s.Assert().ElementsMatch(
+			offers,
+			[]history.Offer{
+				{
+					SellerID:           "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML",
+					OfferID:            3,
+					Pricen:             3,
+					Priced:             1,
+					Price:              3,
+					LastModifiedLedger: 456,
+					Deleted:            true,
+				},
+				{
+					SellerID:           "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML",
+					OfferID:            4,
+					Pricen:             3,
+					Priced:             1,
+					Price:              3,
+					LastModifiedLedger: 456,
+					Deleted:            true,
+				},
+			},
+		)
+	}).Return(nil).Once()
 
 	err = s.processor.Commit(s.ctx)
 	s.Assert().NoError(err)
-}
-
-func (s *OffersProcessorTestSuiteLedger) TestRemoveMultipleOffersRowsAffectedCheck() {
-	err := s.processor.ProcessChange(s.ctx, ingest.Change{
-		Type: xdr.LedgerEntryTypeOffer,
-		Pre: &xdr.LedgerEntry{
-			Data: xdr.LedgerEntryData{
-				Type: xdr.LedgerEntryTypeOffer,
-				Offer: &xdr.OfferEntry{
-					SellerId: xdr.MustAddress("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
-					OfferId:  xdr.Int64(3),
-					Price:    xdr.Price{3, 1},
-				},
-			},
-		},
-		Post: nil,
-	})
-	s.Assert().NoError(err)
-
-	err = s.processor.ProcessChange(s.ctx, ingest.Change{
-		Type: xdr.LedgerEntryTypeOffer,
-		Pre: &xdr.LedgerEntry{
-			Data: xdr.LedgerEntryData{
-				Type: xdr.LedgerEntryTypeOffer,
-				Offer: &xdr.OfferEntry{
-					SellerId: xdr.MustAddress("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
-					OfferId:  xdr.Int64(4),
-					Price:    xdr.Price{3, 1},
-				},
-			},
-		},
-		Post: nil,
-	})
-	s.Assert().NoError(err)
-
-	s.mockQ.On("RemoveOffers", s.ctx, mock.Anything, s.sequence).Run(func(args mock.Arguments) {
-		// To fix order issue due to using ChangeCompactor
-		ids := args.Get(1).([]int64)
-		s.Assert().ElementsMatch(ids, []int64{3, 4})
-	}).Return(int64(0), nil).Once()
-
-	err = s.processor.Commit(s.ctx)
-	s.Assert().IsType(ingest.StateError{}, errors.Cause(err))
-	s.Assert().EqualError(err, "error flushing cache: 0 rows affected when removing 2 offers")
 }
