@@ -44,7 +44,16 @@ func PopulateTradeP17(
 	dest.BaseIsSeller = row.BaseIsSeller
 
 	_, counterOfferIDType := processors.DecodeOfferID(row.CounterOfferID.Int64)
-	if counterOfferIDType == processors.CoreOfferIDType {
+	_, baseOfferIDType := processors.DecodeOfferID(row.BaseOfferID.Int64)
+	if counterOfferIDType == processors.CoreOfferIDType && baseOfferIDType == processors.CoreOfferIDType {
+		// Both Core Offer ID
+		// Confirm diff: https://horizon.stellar.org/trades?base_asset_code=USD&base_asset_issuer=GAEDZ7BHMDYEMU6IJT3CTTGDUSLZWS5CQWZHGP4XUOIDG5ISH3AFAEK2&base_asset_type=credit_alphanum4&counter_asset_type=native&cursor=142354492003246081-3&limit=200&order=asc
+		if row.BaseIsSeller {
+			dest.OfferID = fmt.Sprintf("%d", row.BaseOfferID.Int64)
+		} else {
+			dest.OfferID = fmt.Sprintf("%d", row.CounterOfferID.Int64)
+		}
+	} else if counterOfferIDType == processors.CoreOfferIDType {
 		dest.OfferID = fmt.Sprintf("%d", row.CounterOfferID.Int64)
 	} else {
 		dest.OfferID = fmt.Sprintf("%d", row.BaseOfferID.Int64)
