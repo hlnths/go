@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/stellar/go/amount"
+	"github.com/stellar/go/price"
 	protocol "github.com/stellar/go/protocols/horizon"
 	horizonContext "github.com/stellar/go/services/horizon/internal/context"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
@@ -81,4 +82,52 @@ func populateTradeLinks(
 		"/operations",
 		fmt.Sprintf("%d", opid),
 	)
+}
+
+// PopulateTradeAggregationP17 fills out the details of a trade using a row from the history_trades
+// table. This can be removed in release after P18 upgrade.
+func PopulateTradeAggregationP17(
+	ctx context.Context,
+	dest *TradeAggregationP17,
+	row history.TradeAggregation,
+) error {
+	var err error
+	dest.Timestamp = row.Timestamp
+	dest.TradeCount = row.TradeCount
+	dest.BaseVolume, err = amount.IntStringToAmount(row.BaseVolume)
+	if err != nil {
+		return err
+	}
+	dest.CounterVolume, err = amount.IntStringToAmount(row.CounterVolume)
+	if err != nil {
+		return err
+	}
+	dest.Average = price.StringFromFloat64(row.Average)
+	var (
+		high = xdr.Price{
+			N: xdr.Int32(row.HighN),
+			D: xdr.Int32(row.HighD),
+		}
+		low = xdr.Price{
+			N: xdr.Int32(row.LowN),
+			D: xdr.Int32(row.LowD),
+		}
+		open = xdr.Price{
+			N: xdr.Int32(row.OpenN),
+			D: xdr.Int32(row.OpenD),
+		}
+		close = xdr.Price{
+			N: xdr.Int32(row.CloseN),
+			D: xdr.Int32(row.CloseD),
+		}
+	)
+	dest.High = high.String()
+	dest.HighR = high
+	dest.Low = low.String()
+	dest.LowR = low
+	dest.Open = open.String()
+	dest.OpenR = open
+	dest.Close = close.String()
+	dest.CloseR = close
+	return nil
 }
